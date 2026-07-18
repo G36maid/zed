@@ -11,6 +11,7 @@ pub mod schemars;
 pub mod serde;
 pub mod shell;
 pub mod shell_builder;
+pub mod shell_detection;
 pub mod shell_env;
 pub mod size;
 #[cfg(any(test, feature = "test-support"))]
