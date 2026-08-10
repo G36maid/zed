@@ -1374,7 +1374,7 @@ impl ProjectPanel {
                     self.update_visible_entries(
                         Some((worktree_id, entry_id)),
                         false,
-                        false,
+                        true,
                         window,
                         cx,
                     );

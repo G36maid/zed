@@ -8259,6 +8259,139 @@ async fn test_collapse_selected_entry_and_children_action(cx: &mut gpui::TestApp
 }
 
 #[gpui::test]
+async fn test_collapse_selected_entry_scrolls_collapsed_dir_into_view(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let file_names = |count: usize| {
+        let mut files = serde_json::Map::new();
+        for i in 0..count {
+            files.insert(format!("file_{i:03}.txt"), json!(""));
+        }
+        files
+    };
+
+    // Directory names are ordered alphabetically, which yields the following
+    // visible entries (indices in parentheses):
+    //
+    // root (0), dir_a (1), 80 files (2..=81), dir_b (82), 5 files (83..=87),
+    // dir_c (88), 80 files (89..=168)
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir_a": file_names(80),
+            "dir_b": file_names(5),
+            "dir_c": file_names(80),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let panel = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        let workspace = multi_workspace.workspace();
+        workspace.update(cx, |workspace, cx| {
+            let project_panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(project_panel.clone(), window, cx);
+            project_panel
+        })
+    });
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/dir_a", cx);
+    toggle_expand_dir(&panel, "root/dir_b", cx);
+    toggle_expand_dir(&panel, "root/dir_c", cx);
+    select_path(&panel, "root/dir_b/file_002.txt", cx);
+
+    // Scroll to the bottom of the list so that dir_b, the parent of the
+    // selected file, is scrolled out of view above the viewport.
+    panel.update_in(cx, |panel, _window, cx| {
+        let entry_count = panel
+            .state
+            .visible_entries
+            .iter()
+            .map(|worktree| worktree.entries.len())
+            .sum::<usize>();
+        panel
+            .scroll_handle
+            .scroll_to_item(entry_count - 1, ScrollStrategy::Bottom);
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    // Index of the first entry visible in the viewport, derived from the
+    // scroll offset and the per-entry content height.
+    let first_visible_entry_index = |panel: &ProjectPanel| -> usize {
+        let entry_count = panel
+            .state
+            .visible_entries
+            .iter()
+            .map(|worktree| worktree.entries.len())
+            .sum::<usize>();
+        let state = panel.scroll_handle.0.borrow();
+        let Some(size) = state.last_item_size else {
+            panic!("project panel list has not been laid out");
+        };
+        let item_height = size.contents.height / entry_count as f32;
+        ((-state.base_handle.offset().y) / item_height).floor() as usize
+    };
+
+    let scroll_top_before = panel.update(cx, |panel, _| first_visible_entry_index(panel));
+    assert!(
+        scroll_top_before > 82,
+        "dir_b should be out of view before collapsing, scroll top: {scroll_top_before}"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_selected_entry(&CollapseSelectedEntry {}, window, cx);
+    });
+    cx.run_until_parked();
+
+    let scroll_top = panel.update(cx, |panel, _| first_visible_entry_index(panel));
+    assert!(
+        scroll_top <= 82,
+        "collapsed dir_b should be scrolled into view, scroll top: {scroll_top} \
+         (was {scroll_top_before} before collapsing)"
+    );
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    v dir_a",
+            "          file_000.txt",
+            "          file_001.txt",
+            "          file_002.txt",
+            "          file_003.txt",
+            "          file_004.txt",
+            "          file_005.txt",
+            "          file_006.txt",
+            "          file_007.txt",
+        ],
+    );
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 78..88, cx),
+        &[
+            "          file_076.txt",
+            "          file_077.txt",
+            "          file_078.txt",
+            "          file_079.txt",
+            "    > dir_b  <== selected",
+            "    v dir_c",
+            "          file_000.txt",
+            "          file_001.txt",
+            "          file_002.txt",
+            "          file_003.txt",
+        ],
+        "dir_b should be collapsed with the selection moved onto it"
+    );
+}
+
+#[gpui::test]
 async fn test_collapse_root_single_worktree(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
