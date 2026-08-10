@@ -1553,6 +1553,11 @@ impl ProjectPanel {
                         window,
                         cx,
                     );
+                    self.selection = Some(SelectedEntry {
+                        worktree_id,
+                        entry_id,
+                    });
+                    self.autoscroll(cx);
                     cx.notify();
                     break;
                 }
